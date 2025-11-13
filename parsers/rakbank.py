@@ -9,10 +9,16 @@ STATEMENT_PERIOD_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})\s*(?:to|TO|To)\s*(\d{
 
 # AED transaction
 RAKBANK_LINE_REGEX = re.compile(
-    r"^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+AED\s+([\d,]+\.\d{2})(?:\s*(?:CR|Cr))?\s+-\s+([\d,]+\.\d{2})(?:\s*(?:CR|Cr))?$",
-    re.IGNORECASE,
+r"^(\d{2}/\d{2}/\d{4})\s+" # date
+r"(.+?)\s+" # description (lazy)
+r"AED\s+" # currency
+r"([\d,]+.\d{2})" # amount
+r"(?:\s*((?:CR|Cr)))?\s+" # optional CR after amount (capture)
+r"-\s+" # separator dash
+r"([\d,]+.\d{2})" # balance
+r"(?:\s*((?:CR|Cr)))?\s*$", # optional CR after balance (capture)
+re.IGNORECASE,
 )
-
 # FX transaction
 RAKBANK_FX_REGEX = re.compile(
     r"^(\d{2}/\d{2}/\d{4})\s+([A-Z]{3})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:\s*(CR|Cr))?$",
@@ -73,7 +79,7 @@ def parse_rakbank(file_path: str, password: str | None = None):
                 # --------- AED transaction ----------
                 m = RAKBANK_LINE_REGEX.match(raw)
                 if m:
-                    date, desc, amt_raw, balance_raw = m.groups()
+                    date, desc, amt_raw, amt_cr, balance_raw, bal_cr = m.groups()
                     if any(h in " ".join(buffer_desc).lower() for h in DROP_HINTS):
                         buffer_desc = []
 
@@ -84,10 +90,12 @@ def parse_rakbank(file_path: str, password: str | None = None):
                     balance_val = clean_amount(balance_raw)
 
                     debit, credit = 0.0, 0.0
-                    if "cr" in raw.lower() or "payment" in full_desc.lower() or "refund" in full_desc.lower():
-                        credit = amt_val
+                    desc_low = full_desc.lower()
+                    has_cr_flag = bool(amt_cr) or bool(bal_cr)
+                    if has_cr_flag or ("payment" in desc_low or "refund" in desc_low):
+                     credit = amt_val
                     else:
-                        debit = amt_val
+                     debit = amt_val
 
                     transactions.append({
                         "transaction_date": normalize_date(date, "%d/%m/%Y"),
@@ -116,7 +124,8 @@ def parse_rakbank(file_path: str, password: str | None = None):
                     aed_val = clean_amount(aed_amt)
 
                     debit, credit = 0.0, 0.0
-                    if cr_flag or "cr" in raw.lower() or "payment" in full_desc.lower() or "refund" in full_desc.lower():
+                    desc_low = full_desc.lower()
+                    if cr_flag or ("payment" in desc_low or "refund" in desc_low):
                         credit = aed_val
                     else:
                         debit = aed_val

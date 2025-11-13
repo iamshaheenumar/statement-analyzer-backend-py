@@ -53,6 +53,22 @@ def _parse_full_date(s: str) -> str | None:
             continue
     return None
 
+def _normalize_range_token(raw: str) -> str | None:
+    token = raw.strip().strip(":").lower()
+    if not token:
+        return None
+    if token in {"from", "to"}:
+        return token
+    # Handle common Arabic renderings seen in PDFs (e.g. "ىلإ" for "To").
+    arabic_map = {
+        "من": "from",
+        "من ": "from",
+        "الى": "to",
+        "إلى": "to",
+        "ىلإ": "to",
+    }
+    return arabic_map.get(token)
+
 def parse_emiratesislamic(file_path: str, password: str | None = None):
     transactions = []
     statement_from = None
@@ -61,6 +77,8 @@ def parse_emiratesislamic(file_path: str, password: str | None = None):
     pdf = open_pdf_safe(file_path, password)
     if isinstance(pdf, dict) and "error" in pdf:
         return pdf  # error dict
+
+    pending_range = None
 
     with pdf:
         for page in pdf.pages:
@@ -84,7 +102,29 @@ def parse_emiratesislamic(file_path: str, password: str | None = None):
                             statement_from = parsed
                         else:
                             statement_to = parsed
+                    pending_range = None
                     continue
+
+                normalized_range = _normalize_range_token(raw)
+                if normalized_range:
+                    if normalized_range == "from" and statement_from:
+                        continue
+                    if normalized_range == "to" and statement_to:
+                        continue
+                    pending_range = normalized_range
+                    continue
+
+                if pending_range:
+                    parsed = _parse_full_date(raw)
+                    if parsed:
+                        if pending_range == "from":
+                            statement_from = parsed
+                        else:
+                            statement_to = parsed
+                        pending_range = None
+                        continue
+                    # If the line wasn't a recognizable date, keep the pending flag
+                    # so the next lines still have a chance to supply the date.
 
                 m = LINE_REGEX.match(raw)
                 if not m:
